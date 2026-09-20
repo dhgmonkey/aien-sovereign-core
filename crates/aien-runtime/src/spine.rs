@@ -10,9 +10,11 @@ use crate::sequence::{SequenceArena, SequenceId, SequenceState};
 use crate::swarm::{SwarmConfig, SwarmManager};
 use crate::world::WorldStore;
 
-use aien_inference_abi::{AienInferenceBackend, StepMetrics};
+use aien_inference_abi::{AienInferenceBackend, SamplingParams, StepMetrics};
 use aien_kv_cache::AienKvManager;
-use aien_scheduler::{AienScheduler, SchedulerConfig};
+use aien_scheduler::{
+    AienScheduler, CompletionSink, CompletionSinkId, PromptHandle, SchedulerConfig,
+};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -44,6 +46,85 @@ impl AienRuntimeSpine {
             controller: RuntimeController::new(),
             step_counter: 0,
         }
+    }
+
+    /// Submits structured InferenceWork with PromptHandle and optional completion sink.
+    pub fn submit_inference_work(
+        &mut self,
+        work: aien_platform::queue::InferenceWork,
+        prompt: PromptHandle,
+        sampling_params: Option<SamplingParams>,
+        sink_id: Option<CompletionSinkId>,
+    ) -> Result<(), String> {
+        self.scheduler
+            .submit_work(work, prompt, sampling_params, sink_id)
+    }
+
+    /// Submits a prompt ticket to the scheduler for execution, constructing default InferenceWork.
+    pub fn submit_work(
+        &mut self,
+        prompt: PromptHandle,
+        sampling_params: SamplingParams,
+        priority: u8,
+        sink_id: Option<CompletionSinkId>,
+    ) -> Result<u64, String> {
+        self.step_counter += 1;
+        let seq_id = self.step_counter;
+        let plat_priority = match priority {
+            0 => aien_platform::Priority::Background,
+            1 => aien_platform::Priority::Normal,
+            2 => aien_platform::Priority::Interactive,
+            _ => aien_platform::Priority::Realtime,
+        };
+        let work = aien_platform::queue::InferenceWork {
+            sequence: seq_id,
+            model: aien_platform::ModelHandle(1),
+            kv: aien_platform::queue::KvHandle(seq_id),
+            priority: plat_priority,
+            deadline: None,
+            branch_parent: None,
+            next_token_budget: sampling_params.max_tokens as u32,
+        };
+        self.scheduler
+            .submit_work(work, prompt, Some(sampling_params), sink_id)?;
+        Ok(seq_id)
+    }
+
+    /// Registers a completion sink for streaming output events.
+    pub fn register_completion_sink(&mut self, sink: Arc<dyn CompletionSink>) -> CompletionSinkId {
+        self.scheduler.register_completion_sink(sink)
+    }
+
+    /// Zero-copy subagent sequence branching with completion sink routing.
+    pub fn fork_subagent(
+        &mut self,
+        parent_id: u64,
+        child_id: u64,
+        sink_id: Option<CompletionSinkId>,
+    ) -> Result<(), String> {
+        self.scheduler
+            .fork_subagent_with_sink(parent_id, child_id, sink_id)
+    }
+
+    /// Executes runtime steps in a closed loop until all active requests complete or max_steps is reached.
+    pub async fn run_until_complete<B: AienInferenceBackend>(
+        &mut self,
+        backend: &mut B,
+        max_steps: usize,
+    ) -> Result<Vec<StepMetrics>, String> {
+        let mut all_metrics = Vec::new();
+        for _ in 0..max_steps {
+            if self.scheduler.waiting_count() == 0
+                && self.scheduler.running_count() == 0
+                && self.scheduler.preempted_count() == 0
+            {
+                break;
+            }
+            if let Some(metrics) = self.step(backend).await? {
+                all_metrics.push(metrics);
+            }
+        }
+        Ok(all_metrics)
     }
 
     /// Advances the engine by one transactional step.

@@ -44,6 +44,11 @@ impl ChannelCompletionSink {
     pub fn new(sender: tokio::sync::mpsc::UnboundedSender<CompletionEvent>) -> Self {
         Self { sender }
     }
+
+    pub fn channel() -> (Self, tokio::sync::mpsc::UnboundedReceiver<CompletionEvent>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (Self::new(tx), rx)
+    }
 }
 
 impl CompletionSink for ChannelCompletionSink {

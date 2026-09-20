@@ -119,6 +119,10 @@ impl AienScheduler {
         &mut self.completion_router
     }
 
+    pub fn register_completion_sink(&mut self, sink: Arc<dyn CompletionSink>) -> CompletionSinkId {
+        self.completion_router.register(sink)
+    }
+
     pub fn waiting_count(&self) -> usize {
         self.waiting_queue.len()
     }
@@ -571,8 +575,8 @@ impl AienScheduler {
                             {
                                 is_finished = true;
                                 finish_reason = FinishReason::LengthLimit;
-                            } else {
-                                // Append token in KV manager
+                            } else if !backend.manages_kv_cache() {
+                                // Append token in KV manager if backend does not manage it directly
                                 let append_result = {
                                     let mut kv = self.kv_manager.write();
                                     kv.append_token(request_id)

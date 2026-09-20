@@ -215,6 +215,12 @@ pub trait AienInferenceBackend: Send + Sync {
         &mut self,
         batch: &ScheduledBatch,
     ) -> Result<(Vec<DecodeOutput>, StepMetrics), String>;
+
+    /// Indicates whether the backend directly manages and appends tokens into the KV cache.
+    /// When true, the scheduler avoids redundant secondary append operations during decode steps.
+    fn manages_kv_cache(&self) -> bool {
+        false
+    }
 }
 
 /// High-throughput simulated backend for benchmarking scheduler and KV manager overhead

@@ -709,6 +709,15 @@ impl<B: aien_platform::UnifiedBuffer> AienKvManager<B> {
         self.free_blocks.len()
     }
 
+    pub fn debug_active_blocks(&self) -> Vec<(usize, usize, bool)> {
+        self.blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.ref_count > 0)
+            .map(|(i, b)| (i, b.ref_count, b.is_shared))
+            .collect()
+    }
+
     pub fn active_sequence_count(&self) -> usize {
         self.sequence_tables.len()
     }
@@ -786,6 +795,10 @@ impl<B: aien_platform::UnifiedBuffer> AienKvManager<B> {
         seq_id: u64,
         prompt_tokens: &[u32],
     ) -> Result<Vec<BlockId>, String> {
+        if let Some(table) = self.sequence_tables.get(&seq_id) {
+            return Ok(table.block_ids.clone());
+        }
+
         let num_tokens = prompt_tokens.len();
         let blocks_needed = num_tokens.div_ceil(self.block_size);
 

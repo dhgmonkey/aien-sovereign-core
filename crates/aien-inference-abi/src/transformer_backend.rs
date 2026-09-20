@@ -131,6 +131,20 @@ impl NativeTransformerBackend {
         })
     }
 
+    /// Constructor attaching an existing shared KV manager and explicit TensorBackend compute hardware.
+    pub fn with_shared_kv_and_backend(
+        weights: TransformerWeights,
+        tensor_backend: Arc<dyn TensorBackend>,
+        kv_manager: SharedKvManager,
+    ) -> Self {
+        Self {
+            weights,
+            sequences: HashMap::new(),
+            tensor_backend,
+            kv_manager: Some(kv_manager),
+        }
+    }
+
     /// Creates a new immutable root context from prompt tokens.
     pub fn prefill_sequence(
         &mut self,
@@ -1214,6 +1228,10 @@ impl AienInferenceBackend for NativeTransformerBackend {
         Ok(())
     }
 
+    fn manages_kv_cache(&self) -> bool {
+        self.kv_manager.is_some()
+    }
+
     async fn execute_step(
         &mut self,
         batch: &ScheduledBatch,
@@ -1228,9 +1246,10 @@ impl AienInferenceBackend for NativeTransformerBackend {
             prefill_tokens += req.prompt_tokens.len();
 
             if let Some(kv_mgr) = &self.kv_manager {
-                let _ = kv_mgr
-                    .write()
-                    .allocate_sequence(req.request_id, &req.prompt_tokens);
+                let mut mgr = kv_mgr.write();
+                if mgr.get_block_table(req.request_id).is_none() {
+                    let _ = mgr.allocate_sequence(req.request_id, &req.prompt_tokens);
+                }
             }
 
             let seq = self

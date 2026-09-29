@@ -50,6 +50,11 @@ jobs:
       - name: Run Workspace Unit and Integration Tests
         run: cargo test --workspace --verbose -- --test-threads=1
 
+      - name: Run Required Agent Preflight
+        env:
+          AIEN_PROOF_OFF: '1'
+        run: bash scripts/agent-preflight.sh
+
       - name: Enforce Zero Disk Secrets Invariant
         run: |
           echo "Auditing repository for prohibited plaintext secret files..."
